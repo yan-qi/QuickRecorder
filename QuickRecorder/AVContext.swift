@@ -112,6 +112,7 @@ class AVOutputClass: NSObject, AVCaptureFileOutputRecordingDelegate, AVCaptureVi
                 print("Failed to create temp directory for camera: \(error.localizedDescription)")
                 // Fallback to direct saving if temp directory creation fails
                 SCContext.filePath = SCContext.finalFilePath
+                SCContext.showNotification(title: "Recording Info", body: "Atomic saving failed, recording directly to final location", id: "quickrecorder.atomic_fallback.\(UUID().uuidString)")
             }
             SCContext.captureSession.startRunning()
             output.startRecording(to: SCContext.filePath.url, recordingDelegate: self)

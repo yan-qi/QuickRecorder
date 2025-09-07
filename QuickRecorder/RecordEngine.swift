@@ -332,6 +332,7 @@ extension AppDelegate {
                 SCContext.filePath = "\(path).qma"
                 SCContext.filePath1 = "\(path).qma/sys.\(fileEnding)"
                 SCContext.filePath2 = "\(path).qma/mic.\(fileEnding)"
+                SCContext.showNotification(title: "Recording Info", body: "Atomic saving failed, recording directly to final location", id: "quickrecorder.atomic_fallback.\(UUID().uuidString)")
             }
             
             let infoJsonURL = "\(SCContext.filePath ?? "")/info.json".url
@@ -358,6 +359,7 @@ extension AppDelegate {
                 print("Failed to create temp directory for audio: \(error.localizedDescription)")
                 // Fallback to direct saving
                 SCContext.filePath = "\(path).\(fileEnding)"
+                SCContext.showNotification(title: "Recording Info", body: "Atomic saving failed, recording directly to final location", id: "quickrecorder.atomic_fallback.\(UUID().uuidString)")
             }
             
             SCContext.filePath1 = SCContext.filePath

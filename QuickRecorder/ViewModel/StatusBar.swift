@@ -30,7 +30,7 @@ struct StatusBarItem: View {
             if SCContext.streamType != nil {
                 ZStack {
                     Rectangle()
-                        .fill(Color.black.opacity(0.7))
+                        .fill(Color("progressPanelBackground"))
                         .shadow(color: .black.opacity(0.2), radius: 2)
                         .cornerRadius(6)
                     HStack(spacing: 4) {

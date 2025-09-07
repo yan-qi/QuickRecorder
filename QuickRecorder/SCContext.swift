@@ -52,6 +52,7 @@ class SCContext {
     static var streamType: StreamType?
     static var availableContent: SCShareableContent?
     static let excludedApps = ["", "com.apple.dock", "com.apple.screencaptureui", "com.apple.controlcenter", "com.apple.notificationcenterui", "com.apple.systemuiserver", "com.apple.WindowManager", "dev.mnpn.Azayaka", "com.gaosun.eul", "com.pointum.hazeover", "net.matthewpalmer.Vanilla", "com.dwarvesv.minimalbar", "com.bjango.istatmenus.status"]
+    static let tempDirectoryName = ".tmp"
     
     static func updateAvailableContentSync() -> SCShareableContent? {
         let semaphore = DispatchSemaphore(value: 0)
@@ -245,7 +246,7 @@ class SCContext {
     
     static func getTempDirectory() -> String {
         let saveDir = ud.string(forKey: "saveDirectory")!
-        return saveDir + "/.tmp"
+        return saveDir + "/\(tempDirectoryName)"
     }
     
     static func getTempFilePath(fileExtension: String) -> String {
@@ -337,37 +338,25 @@ class SCContext {
     }
     
     static func cleanupFailedRecording() {
-        // Clean up current recording's temp files
-        if let currentPath = filePath {
-            let tempDir = getTempDirectory()
-            if currentPath.hasPrefix(tempDir) {
-                print("Cleaning up failed recording temp file: \(currentPath)")
-                try? fd.removeItem(atPath: currentPath)
-            }
-        }
-        
-        // Clean up additional temp files if they exist (for multi-file recordings)
-        if let path1 = filePath1 {
-            let tempDir = getTempDirectory()
-            if path1.hasPrefix(tempDir) {
-                print("Cleaning up failed recording temp file: \(path1)")
-                try? fd.removeItem(atPath: path1)
-            }
-        }
-        
-        if let path2 = filePath2 {
-            let tempDir = getTempDirectory()
-            if path2.hasPrefix(tempDir) {
-                print("Cleaning up failed recording temp file: \(path2)")
-                try? fd.removeItem(atPath: path2)
-            }
-        }
+        // Clean up temp files using helper function
+        cleanupTempFileIfNeeded(filePath)
+        cleanupTempFileIfNeeded(filePath1)
+        cleanupTempFileIfNeeded(filePath2)
         
         // Reset file paths
         filePath = nil
         filePath1 = nil
         filePath2 = nil
         finalFilePath = nil
+    }
+    
+    private static func cleanupTempFileIfNeeded(_ path: String?) {
+        guard let path = path else { return }
+        let tempDir = getTempDirectory()
+        if path.hasPrefix(tempDir) {
+            print("Cleaning up failed recording temp file: \(path)")
+            try? fd.removeItem(atPath: path)
+        }
     }
     
     static func updateAudioSettings(format: String = ud.string(forKey: "audioFormat") ?? "", rate: Int = 48000) -> [String : Any] {
