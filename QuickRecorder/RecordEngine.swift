@@ -315,11 +315,26 @@ extension AppDelegate {
             default: assertionFailure("loaded unknown audio format: ".local + fileEnding)
         }
         let path = SCContext.getFilePath()
+        SCContext.finalFilePath = "\(path).\(fileEnding)" // Store final destination
+        
         if recordMic && SCContext.streamType == .systemaudio {
-            SCContext.filePath = "\(path).qma"
-            SCContext.filePath1 = "\(path).qma/sys.\(fileEnding)"
-            SCContext.filePath2 = "\(path).qma/mic.\(fileEnding)"
-            let infoJsonURL = "\(path).qma/info.json".url
+            // Create temp directory and use temporary paths for .qma package
+            do {
+                try SCContext.createTempDirectoryIfNeeded()
+                let tempPath = SCContext.getTempFilePath(fileExtension: "qma")
+                SCContext.filePath = tempPath
+                SCContext.filePath1 = "\(tempPath)/sys.\(fileEnding)"
+                SCContext.filePath2 = "\(tempPath)/mic.\(fileEnding)"
+                SCContext.finalFilePath = "\(path).qma" // Update final path for .qma
+            } catch {
+                print("Failed to create temp directory for audio: \(error.localizedDescription)")
+                // Fallback to direct saving
+                SCContext.filePath = "\(path).qma"
+                SCContext.filePath1 = "\(path).qma/sys.\(fileEnding)"
+                SCContext.filePath2 = "\(path).qma/mic.\(fileEnding)"
+            }
+            
+            let infoJsonURL = "\(SCContext.filePath ?? "")/info.json".url
             let jsonString = "{\"format\": \"\(fileEnding)\", \"encoder\": \"\(encorder)\", \"exportMP3\": \(audioFormat.rawValue == AudioFormat.mp3.rawValue), \"sysVol\": 1.0, \"micVol\": 1.0}"
             try? fd.createDirectory(at: SCContext.filePath.url, withIntermediateDirectories: true, attributes: nil)
             try? jsonString.write(to: infoJsonURL, atomically: true, encoding: .utf8)
@@ -335,7 +350,16 @@ extension AppDelegate {
             SCContext.vW.startWriting()
             //SCContext.audioFile2 = try! AVAudioFile(forWriting: SCContext.filePath2.url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
         } else {
-            SCContext.filePath = "\(path).\(fileEnding)"
+            // Create temp directory and use temporary path for single audio file
+            do {
+                try SCContext.createTempDirectoryIfNeeded()
+                SCContext.filePath = SCContext.getTempFilePath(fileExtension: fileEnding)
+            } catch {
+                print("Failed to create temp directory for audio: \(error.localizedDescription)")
+                // Fallback to direct saving
+                SCContext.filePath = "\(path).\(fileEnding)"
+            }
+            
             SCContext.filePath1 = SCContext.filePath
             SCContext.audioFile = try! AVAudioFile(forWriting: SCContext.filePath.url, settings: SCContext.updateAudioSettings(), commonFormat: .pcmFormatFloat32, interleaved: false)
         }
@@ -371,9 +395,19 @@ extension AppDelegate {
         }
 
         if remuxAudio && recordMic && recordWinSound {
-            SCContext.filePath = "\(SCContext.getFilePath()).\(fileEnding).\(fileEnding).\(fileEnding)"
+            SCContext.finalFilePath = "\(SCContext.getFilePath()).\(fileEnding).\(fileEnding).\(fileEnding)"
         } else {
-            SCContext.filePath = "\(SCContext.getFilePath()).\(fileEnding)"
+            SCContext.finalFilePath = "\(SCContext.getFilePath()).\(fileEnding)"
+        }
+        
+        // Create temp directory and use temporary file path during recording
+        do {
+            try SCContext.createTempDirectoryIfNeeded()
+            SCContext.filePath = SCContext.getTempFilePath(fileExtension: fileEnding)
+        } catch {
+            print("Failed to create temp directory: \(error.localizedDescription)")
+            // Fallback to direct saving if temp directory creation fails
+            SCContext.filePath = SCContext.finalFilePath
         }
         SCContext.vW = try? AVAssetWriter.init(outputURL: SCContext.filePath.url, fileType: fileType!)
         let encoderIsH265 = (encoder.rawValue == Encoder.h265.rawValue) || recordHDR
@@ -624,6 +658,10 @@ extension AppDelegate {
     func stream(_ stream: SCStream, didStopWithError error: Error) { // stream error
         print("closing stream with error:\n".local, error,
               "\nthis might be due to the window closing or the user stopping from the sonoma ui".local)
+        
+        // Clean up temp files on stream error before stopping recording
+        SCContext.cleanupFailedRecording()
+        
         DispatchQueue.main.async {
             SCContext.stream = nil
             SCContext.stopRecording()

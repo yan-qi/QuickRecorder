@@ -346,6 +346,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, SCStreamDelegate, SCStreamOu
     }
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        // Clean up any leftover temporary files from previous sessions
+        SCContext.cleanupTempFiles()
+        
         closeAllWindow()
         if showOnDock { _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: true) }
         tips("Would you like to use H.265 format for better video quality and smaller file size?",

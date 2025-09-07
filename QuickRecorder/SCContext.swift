@@ -38,6 +38,7 @@ class SCContext {
     static var filePath: String!
     static var filePath1: String!
     static var filePath2: String!
+    static var finalFilePath: String!
     static var audioFile: AVAudioFile?
     static var audioFile2: AVAudioFile?
     static var vW: AVAssetWriter!
@@ -181,6 +182,133 @@ class SCContext {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "y-MM-dd HH.mm.ss"
         return ud.string(forKey: "saveDirectory")! + (capture ? "/Capturing at ".local : "/Recording at ".local) + dateFormatter.string(from: Date())
+    }
+    
+    static func getTempDirectory() -> String {
+        let saveDir = ud.string(forKey: "saveDirectory")!
+        return saveDir + "/.tmp"
+    }
+    
+    static func getTempFilePath(fileExtension: String) -> String {
+        let tempDir = getTempDirectory()
+        let uuid = UUID().uuidString
+        return tempDir + "/recording_\(uuid).\(fileExtension)"
+    }
+    
+    static func createTempDirectoryIfNeeded() throws {
+        let tempDir = getTempDirectory()
+        var isDirectory: ObjCBool = false
+        
+        if !fd.fileExists(atPath: tempDir, isDirectory: &isDirectory) {
+            try fd.createDirectory(atPath: tempDir, withIntermediateDirectories: true, attributes: nil)
+        } else if !isDirectory.boolValue {
+            try fd.removeItem(atPath: tempDir)
+            try fd.createDirectory(atPath: tempDir, withIntermediateDirectories: true, attributes: nil)
+        }
+    }
+    
+    static func moveFromTempToFinal(tempPath: String, finalPath: String) throws {
+        if fd.fileExists(atPath: finalPath) {
+            try fd.removeItem(atPath: finalPath)
+        }
+        try fd.moveItem(atPath: tempPath, toPath: finalPath)
+    }
+    
+    static func cleanupTempFiles() {
+        let tempDir = getTempDirectory()
+        do {
+            let tempFiles = try fd.contentsOfDirectory(atPath: tempDir)
+            for file in tempFiles {
+                if file.hasPrefix("recording_") {
+                    try fd.removeItem(atPath: tempDir + "/" + file)
+                }
+            }
+        } catch {
+            print("Failed to cleanup temp files: \(error.localizedDescription)")
+        }
+    }
+    
+    static func moveRecordingToFinal() -> Bool {
+        guard let finalPath = finalFilePath else {
+            print("No final file path set, skipping move operation")
+            return false
+        }
+        
+        // Check if we're using a temporary file
+        let tempDir = getTempDirectory()
+        guard filePath.hasPrefix(tempDir) else {
+            print("File is not in temp directory, no move needed")
+            return true
+        }
+        
+        do {
+            print("Moving recording from \(filePath ?? "nil") to \(finalPath)")
+            try moveFromTempToFinal(tempPath: filePath, finalPath: finalPath)
+            
+            // Update filePath to point to final location for any subsequent references
+            filePath = finalPath
+            print("Successfully moved recording to final location: \(finalPath)")
+            return true
+        } catch {
+            print("Failed to move recording to final location: \(error.localizedDescription)")
+            // Try to clean up temp file if move failed
+            try? fd.removeItem(atPath: filePath)
+            return false
+        }
+    }
+    
+    static func moveRecordingToFinalWithCustomPaths(tempPath: String, finalPath: String) -> Bool {
+        let tempDir = getTempDirectory()
+        guard tempPath.hasPrefix(tempDir) else {
+            print("File is not in temp directory, no move needed")
+            return true
+        }
+        
+        do {
+            print("Moving recording from \(tempPath) to \(finalPath)")
+            try moveFromTempToFinal(tempPath: tempPath, finalPath: finalPath)
+            print("Successfully moved recording to final location: \(finalPath)")
+            return true
+        } catch {
+            print("Failed to move recording to final location: \(error.localizedDescription)")
+            // Try to clean up temp file if move failed
+            try? fd.removeItem(atPath: tempPath)
+            return false
+        }
+    }
+    
+    static func cleanupFailedRecording() {
+        // Clean up current recording's temp files
+        if let currentPath = filePath {
+            let tempDir = getTempDirectory()
+            if currentPath.hasPrefix(tempDir) {
+                print("Cleaning up failed recording temp file: \(currentPath)")
+                try? fd.removeItem(atPath: currentPath)
+            }
+        }
+        
+        // Clean up additional temp files if they exist (for multi-file recordings)
+        if let path1 = filePath1 {
+            let tempDir = getTempDirectory()
+            if path1.hasPrefix(tempDir) {
+                print("Cleaning up failed recording temp file: \(path1)")
+                try? fd.removeItem(atPath: path1)
+            }
+        }
+        
+        if let path2 = filePath2 {
+            let tempDir = getTempDirectory()
+            if path2.hasPrefix(tempDir) {
+                print("Cleaning up failed recording temp file: \(path2)")
+                try? fd.removeItem(atPath: path2)
+            }
+        }
+        
+        // Reset file paths
+        filePath = nil
+        filePath1 = nil
+        filePath2 = nil
+        finalFilePath = nil
     }
     
     static func updateAudioSettings(format: String = ud.string(forKey: "audioFormat") ?? "", rate: Int = 48000) -> [String : Any] {
@@ -357,9 +485,19 @@ class SCContext {
             vW.finishWriting {
                 if vW.status != .completed {
                     print("Video writing failed with status: \(vW.status), error: \(String(describing: vW.error))")
+                    // Clean up temp files on recording failure
+                    cleanupFailedRecording()
                     let err = vW.error?.localizedDescription ?? "Unknow Error"
                     showNotification(title: "Failed to save file".local, body: "\(err)", id: "quickrecorder.error.\(UUID().uuidString)")
                 } else {
+                    // Move recording from temp to final location
+                    let moveSuccess = moveRecordingToFinal()
+                    if !moveSuccess {
+                        showNotification(title: "Failed to save file".local, body: "Could not move recording to final location", id: "quickrecorder.error.\(UUID().uuidString)")
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
                     if ud.bool(forKey: "recordMic") && ud.bool(forKey: "recordWinSound") && ud.bool(forKey: "remuxAudio") {
                         mixAudioTracks(videoURL: filePath.url) { result in
                             switch result {
@@ -403,17 +541,30 @@ class SCContext {
         if streamType == .systemaudio {
             if ud.string(forKey: "audioFormat") == AudioFormat.mp3.rawValue && !ud.bool(forKey: "recordMic") {
                 Task {
-                    let outPutUrl = (String(filePath.dropLast(4)) + ".mp3").url
+                    // First move the m4a file to final location, then convert
+                    guard let finalM4aPath = finalFilePath else {
+                        showNotification(title: "Failed to save file".local, body: "Final file path not set", id: "quickrecorder.error.\(UUID().uuidString)")
+                        return
+                    }
+                    
+                    let finalMp3Path = (String(finalM4aPath.dropLast(4)) + ".mp3")
+                    
+                    let moveSuccess = moveRecordingToFinal()
+                    if !moveSuccess {
+                        showNotification(title: "Failed to save file".local, body: "Could not move recording to final location", id: "quickrecorder.error.\(UUID().uuidString)")
+                        return
+                    }
+                    
                     do {
-                        try await m4a2mp3(inputUrl: filePath1.url, outputUrl: outPutUrl)
-                        try? fd.removeItem(atPath: filePath1)
+                        try await m4a2mp3(inputUrl: finalM4aPath.url, outputUrl: finalMp3Path.url)
+                        try? fd.removeItem(atPath: finalM4aPath) // Remove the intermediate m4a file
                         if !ud.bool(forKey: "showPreview") {
                             let title = "Recording Completed".local
-                            let body = String(format: "File saved to: %@".local, outPutUrl.path.removingPercentEncoding!)
+                            let body = String(format: "File saved to: %@".local, finalMp3Path.removingPercentEncoding!)
                             let id = "quickrecorder.completed.\(UUID().uuidString)"
                             showNotification(title: title, body: body, id: id)
                         } else {
-                            DispatchQueue.main.async { showPreview(path: outPutUrl.path, image: NSImage(named: "audioIcon")) }
+                            DispatchQueue.main.async { showPreview(path: finalMp3Path, image: NSImage(named: "audioIcon")) }
                         }
                     } catch {
                         showNotification(title: "Failed to save file".local, body: "\(error.localizedDescription)", id: "quickrecorder.error.\(UUID().uuidString)")
@@ -421,6 +572,13 @@ class SCContext {
                 }
             } else {
                 if ud.bool(forKey: "remuxAudio") && ud.bool(forKey: "recordMic") {
+                    // Move .qma package from temp to final location
+                    let moveSuccess = moveRecordingToFinal()
+                    if !moveSuccess {
+                        showNotification(title: "Failed to save file".local, body: "Could not move recording to final location", id: "quickrecorder.error.\(UUID().uuidString)")
+                        return
+                    }
+                    
                     let fileURL = filePath.url
                     let document = try? qmaPackageHandle.load(from: fileURL)
                     if let document = document {
@@ -434,6 +592,13 @@ class SCContext {
                         audioPlayerManager.saveFile(saveURL, saveAsMP3: exportMP3)
                     }
                 } else {
+                    // Move recording from temp to final location for simple audio
+                    let moveSuccess = moveRecordingToFinal()
+                    if !moveSuccess {
+                        showNotification(title: "Failed to save file".local, body: "Could not move recording to final location", id: "quickrecorder.error.\(UUID().uuidString)")
+                        return
+                    }
+                    
                     if !ud.bool(forKey: "showPreview") {
                         let title = "Recording Completed".local
                         let body = String(format: "File saved to: %@".local, filePath)
@@ -461,6 +626,15 @@ class SCContext {
                     return
                 }
             }
+            
+            // Move recording from temp to final location
+            let moveSuccess = moveRecordingToFinal()
+            if !moveSuccess {
+                showNotification(title: "Failed to save file".local, body: "Could not move recording to final location", id: "quickrecorder.error.\(UUID().uuidString)")
+                streamType = nil
+                return
+            }
+            
             if !ud.bool(forKey: "showPreview") {
                 let title = "Recording Completed".local
                 let body = String(format: "File saved to: %@".local, filePath)

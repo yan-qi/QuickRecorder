@@ -102,7 +102,17 @@ class AVOutputClass: NSObject, AVCaptureFileOutputRecordingDelegate, AVCaptureVi
             guard let connection = output.connection(with: .video) else { return }
             output.setOutputSettings(videoSettings, for: connection)
             let fileEnding = ud.string(forKey: "videoFormat") ?? ""
-            SCContext.filePath = "\(SCContext.getFilePath()).\(fileEnding)"
+            SCContext.finalFilePath = "\(SCContext.getFilePath()).\(fileEnding)"
+            
+            // Create temp directory and use temporary file path during recording
+            do {
+                try SCContext.createTempDirectoryIfNeeded()
+                SCContext.filePath = SCContext.getTempFilePath(fileExtension: fileEnding)
+            } catch {
+                print("Failed to create temp directory for camera: \(error.localizedDescription)")
+                // Fallback to direct saving if temp directory creation fails
+                SCContext.filePath = SCContext.finalFilePath
+            }
             SCContext.captureSession.startRunning()
             output.startRecording(to: SCContext.filePath.url, recordingDelegate: self)
             SCContext.streamType = StreamType.idevice
@@ -141,9 +151,31 @@ class AVOutputClass: NSObject, AVCaptureFileOutputRecordingDelegate, AVCaptureVi
     }
 
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
+        if error != nil {
+            print("Camera recording failed: \(error!.localizedDescription)")
+            // Clean up temp file on error
+            try? fd.removeItem(atPath: SCContext.filePath)
+            return
+        }
+        
+        // Move recording from temp to final location
+        let moveSuccess = SCContext.moveRecordingToFinal()
+        if !moveSuccess {
+            let content = UNMutableNotificationContent()
+            content.title = "Recording Failed".local
+            content.body = "Could not move recording to final location"
+            content.sound = UNNotificationSound.default
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            let request = UNNotificationRequest(identifier: "quickrecorder.error.\(UUID().uuidString)", content: content, trigger: trigger)
+            UNUserNotificationCenter.current().add(request) { error in
+                if let error = error { print("Notification failed to send：\(error.localizedDescription)") }
+            }
+            return
+        }
+        
         let content = UNMutableNotificationContent()
         content.title = "Recording Completed".local
-        content.body = String(format: "File saved to: %@".local, outputFileURL.path)
+        content.body = String(format: "File saved to: %@".local, SCContext.filePath)
         content.sound = UNNotificationSound.default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         let request = UNNotificationRequest(identifier: "quickrecorder.completed.\(UUID().uuidString)", content: content, trigger: trigger)
