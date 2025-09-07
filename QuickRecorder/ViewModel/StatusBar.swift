@@ -30,9 +30,9 @@ struct StatusBarItem: View {
             if SCContext.streamType != nil {
                 ZStack {
                     Rectangle()
-                        .fill(Color.mypurple)
-                        .shadow(color: .black.opacity(0.3), radius: 4)
-                        .cornerRadius(4)
+                        .fill(Color.black.opacity(0.7))
+                        .shadow(color: .black.opacity(0.2), radius: 2)
+                        .cornerRadius(6)
                     HStack(spacing: 4) {
                         if miniStatusBar {
                             if isHovering {
@@ -90,7 +90,7 @@ struct StatusBarItem: View {
                             } else {
                                 Text(recordingLength)
                                     .foregroundStyle(.white)
-                                    .font(.system(size: 15).monospaced())
+                                    .font(.system(size: 12).monospaced())
                                     .offset(x: 0.5)
                             }
                         } else {
@@ -125,7 +125,7 @@ struct StatusBarItem: View {
                                 }
                                 Text(recordingLength)
                                     .foregroundStyle(.white)
-                                    .font(.system(size: 15).monospaced())
+                                    .font(.system(size: 12).monospaced())
                                     .offset(x: 0.5)
                             }
                         }
