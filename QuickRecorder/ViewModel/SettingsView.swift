@@ -167,6 +167,7 @@ struct OutputView: View {
     @AppStorage("AECLevel")         private var AECLevel: String = "mid"
     @AppStorage("withAlpha")        private var withAlpha: Bool = false
     @AppStorage("saveDirectory")    private var saveDirectory: String?
+    @AppStorage("fileNamingPattern") private var fileNamingPattern: String = "Record at yyyy-MM-dd hh.mm.ss"
 
     var body: some View {
         SForm(spacing: 30) {
@@ -225,6 +226,60 @@ struct OutputView: View {
                         .truncationMode(.tail)
                     Button("Select...", action: { updateOutputDirectory() })
                 }
+                SDivider()
+                SItem(label: LocalizedStringKey("File Naming Pattern")) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("File naming pattern", text: $fileNamingPattern)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                        Text("Example: \(getPreviewFileName())")
+                            .font(.caption)
+                            .foregroundColor(Color.secondary)
+                        Text("Tokens: yyyy (year), MM (month), dd (day), hh/HH (hour), mm (minute), ss (second)")
+                            .font(.caption2)
+                            .foregroundColor(Color.secondary)
+                    }
+                }
+                SDivider()
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(LocalizedStringKey("Presets"))
+                        Spacer()
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            HoverButton(color: .secondary, secondaryColor: .blue, action: {
+                                fileNamingPattern = "Record at yyyy-MM-dd hh.mm.ss"
+                            }) {
+                                Text("Record at yyyy-MM-dd hh.mm.ss")
+                                    .font(.caption)
+                            }
+                            
+                            HoverButton(color: .secondary, secondaryColor: .blue, action: {
+                                fileNamingPattern = "yyyy-MM-dd at hh.mm.ss"
+                            }) {
+                                Text("yyyy-MM-dd at hh.mm.ss")
+                                    .font(.caption)
+                            }
+                        }
+                        
+                        HStack(spacing: 8) {
+                            HoverButton(color: .secondary, secondaryColor: .blue, action: {
+                                fileNamingPattern = "Record_yyyy_MM_dd_hh_mm_ss"
+                            }) {
+                                Text("Record_yyyy_MM_dd_hh_mm_ss")
+                                    .font(.caption)
+                            }
+                            
+                            HoverButton(color: .secondary, secondaryColor: .blue, action: {
+                                fileNamingPattern = "yyyy-MM-dd_hh-mm-ss_Record"
+                            }) {
+                                Text("yyyy-MM-dd_hh-mm-ss_Record")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                }
             }
         }.onChange(of: withAlpha) {alpha in
             if alpha {
@@ -233,6 +288,10 @@ struct OutputView: View {
                 if background == .clear { background = .wallpaper }
             }
         }
+    }
+    
+    func getPreviewFileName() -> String {
+        return SCContext.formatFileNamePattern(fileNamingPattern)
     }
     
     func updateOutputDirectory() { // todo: re-sandbox

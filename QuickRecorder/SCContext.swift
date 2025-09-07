@@ -179,9 +179,68 @@ class SCContext {
     }
     
     static func getFilePath(capture: Bool = false) -> String {
+        let customPattern = ud.string(forKey: "fileNamingPattern") ?? "Record at yyyy-MM-dd hh.mm.ss"
+        return ud.string(forKey: "saveDirectory")! + "/" + formatFileNamePattern(customPattern, capture: capture)
+    }
+    
+    static func formatFileNamePattern(_ pattern: String, capture: Bool = false) -> String {
+        let date = Date()
         let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "y-MM-dd HH.mm.ss"
-        return ud.string(forKey: "saveDirectory")! + (capture ? "/Capturing at ".local : "/Recording at ".local) + dateFormatter.string(from: Date())
+        
+        // Replace the prefix based on capture type
+        var formattedPattern = pattern
+        if capture {
+            formattedPattern = formattedPattern.replacingOccurrences(of: "Record", with: "Capturing".local)
+        } else {
+            formattedPattern = formattedPattern.replacingOccurrences(of: "Record", with: "Recording".local)
+        }
+        
+        // Replace date/time tokens with actual values
+        let replacements: [(String, String)] = [
+            ("yyyy", {
+                dateFormatter.dateFormat = "yyyy"
+                return dateFormatter.string(from: date)
+            }()),
+            ("yy", {
+                dateFormatter.dateFormat = "yy"
+                return dateFormatter.string(from: date)
+            }()),
+            ("MM", {
+                dateFormatter.dateFormat = "MM"
+                return dateFormatter.string(from: date)
+            }()),
+            ("MMM", {
+                dateFormatter.dateFormat = "MMM"
+                return dateFormatter.string(from: date)
+            }()),
+            ("dd", {
+                dateFormatter.dateFormat = "dd"
+                return dateFormatter.string(from: date)
+            }()),
+            ("hh", {
+                dateFormatter.dateFormat = "HH"
+                return dateFormatter.string(from: date)
+            }()),
+            ("mm", {
+                dateFormatter.dateFormat = "mm"
+                return dateFormatter.string(from: date)
+            }()),
+            ("ss", {
+                dateFormatter.dateFormat = "ss"
+                return dateFormatter.string(from: date)
+            }()),
+            ("HH", {
+                dateFormatter.dateFormat = "HH"
+                return dateFormatter.string(from: date)
+            }())
+        ]
+        
+        // Apply replacements in order (longest first to avoid partial matches)
+        for (token, value) in replacements {
+            formattedPattern = formattedPattern.replacingOccurrences(of: token, with: value)
+        }
+        
+        return formattedPattern
     }
     
     static func getTempDirectory() -> String {

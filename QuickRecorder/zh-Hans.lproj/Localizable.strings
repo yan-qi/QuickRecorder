@@ -92,9 +92,13 @@
 "Unknown App" = "未知应用";
 "A Window" = "单个窗口";
 "Output Folder" = "文件保存位置";
+"File Naming Pattern" = "文件命名模式";
+"Presets" = "预设模板";
 "Currently set to \"%@\"" = "当前保存在 \"%@\"";
 "/Recording at " = "/录制于 ";
 "/Capturing at " = "/捕获于 ";
+"Recording" = "录制";
+"Capturing" = "捕获";
 " (Cropped in " = " (修剪于 ";
 "Recording Completed" = "录制结束";
 "Clip Saved" = "剪辑已保存";
