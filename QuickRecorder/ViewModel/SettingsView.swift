@@ -44,6 +44,7 @@ struct GeneralView: View {
     @AppStorage("poSafeDelay") private var poSafeDelay: Int = 1
     @AppStorage("showOnDock") private var showOnDock: Bool = true
     @AppStorage("showMenubar") private var showMenubar: Bool = false
+    @AppStorage("disableFloatingPanel") private var disableFloatingPanel: Bool = false
     
     @State private var launchAtLogin = false
 
@@ -70,6 +71,9 @@ struct GeneralView: View {
                 SDivider()
                 SToggle("Show QuickRecorder on Menu Bar", isOn: $showMenubar)
                     //.disabled(!showOnDock)
+                SDivider()
+                SToggle("Menu Bar Only (No Floating Panel)", isOn: $disableFloatingPanel)
+                    .disabled(!showMenubar)
             }
             SGroupBox(label: "Update") { UpdaterSettingsView(updater: updaterController.updater) }
             VStack(spacing: 8) {

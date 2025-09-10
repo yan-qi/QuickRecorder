@@ -141,7 +141,8 @@ struct StatusBarItem: View {
                     if SCContext.autoStop != 0 && timePassed / 60 >= CGFloat(SCContext.autoStop) { SCContext.stopRecording() }
                     if let visible = statusBarItem.button?.window?.occlusionState.contains(.visible) {
                         if visible { NSApp.windows.first(where: { $0.title == "Recording Controller".local })?.close(); return }
-                        if SCContext.streamType != nil  && !visible && !(NSApp.windows.first(where: { $0.title == "Recording Controller".local })?.isVisible ?? false) {
+                        // Only show floating panel if not disabled in settings
+                        if SCContext.streamType != nil && !visible && !ud.bool(forKey: "disableFloatingPanel") && !(NSApp.windows.first(where: { $0.title == "Recording Controller".local })?.isVisible ?? false) {
                             guard let screen = SCContext.getScreenWithMouse() else { return }
                             let width = getStatusBarWidth()
                             let wX = (screen.frame.width - width) / 2
