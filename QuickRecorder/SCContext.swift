@@ -301,6 +301,13 @@ class SCContext {
             return true
         }
         
+        // Add configurable delay before moving to destination
+        let delaySeconds = ud.integer(forKey: "fileDeliveryDelay")
+        if delaySeconds > 0 {
+            print("Delaying file move by \(delaySeconds) seconds to allow folder watchers to be ready...")
+            Thread.sleep(forTimeInterval: TimeInterval(delaySeconds))
+        }
+        
         do {
             print("Moving recording from \(filePath ?? "nil") to \(finalPath)")
             try moveFromTempToFinal(tempPath: filePath, finalPath: finalPath)

@@ -35,7 +35,7 @@ struct SettingsView: View {
             }
             .listStyle(.sidebar)
             .padding(.top, 9)
-        }.frame(width: 600, height: 512)
+        }.frame(width: 600, height: 880)
     }
 }
 
@@ -168,6 +168,7 @@ struct OutputView: View {
     @AppStorage("withAlpha")        private var withAlpha: Bool = false
     @AppStorage("saveDirectory")    private var saveDirectory: String?
     @AppStorage("fileNamingPattern") private var fileNamingPattern: String = "Record at yyyy-MM-dd hh.mm.ss"
+    @AppStorage("fileDeliveryDelay") private var fileDeliveryDelay: Int = 0
 
     var body: some View {
         SForm(spacing: 30) {
@@ -278,6 +279,22 @@ struct OutputView: View {
                                     .font(.caption)
                             }
                         }
+                    }
+                }
+                SDivider()
+                SItem(label: "File Delivery Delay") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Stepper(value: $fileDeliveryDelay, in: 0...60, step: 1) {
+                                HStack {
+                                    Text("\(fileDeliveryDelay) seconds")
+                                    Spacer()
+                                }
+                            }
+                        }
+                        Text("Delay before moving files to destination folder (useful for folder watchers)")
+                            .font(.caption2)
+                            .foregroundColor(Color.secondary)
                     }
                 }
             }
