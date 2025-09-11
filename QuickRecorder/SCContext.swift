@@ -274,6 +274,94 @@ class SCContext {
         try fd.moveItem(atPath: tempPath, toPath: finalPath)
     }
     
+    static func waitForFileReady(atPath path: String, maxAttempts: Int = 30, delayInterval: TimeInterval = 0.1) -> Bool {
+        var attempts = 0
+        var lastSize: Int64 = -1
+        var stableCount = 0
+        let requiredStableChecks = 15  // Increased from 3 to 5 for more stability
+        
+        while attempts < maxAttempts {
+            // Check if file exists
+            guard fd.fileExists(atPath: path) else {
+                Thread.sleep(forTimeInterval: delayInterval)
+                attempts += 1
+                continue
+            }
+            
+            // Get current file size and modification time
+            do {
+                let attributes = try fd.attributesOfItem(atPath: path)
+                let currentSize = attributes[FileAttributeKey.size] as? Int64 ?? 0
+                
+                // File must have content
+                guard currentSize > 0 else {
+                    Thread.sleep(forTimeInterval: delayInterval)
+                    attempts += 1
+                    continue
+                }
+                
+                // Check if file size has stabilized
+                if currentSize == lastSize {
+                    stableCount += 1
+                    if stableCount >= requiredStableChecks {
+                        // File size is stable, perform more thorough readiness checks
+                        
+                        // 1. Try to open file for reading
+                        guard let fileHandle = FileHandle(forReadingAtPath: path) else {
+                            print("File exists but cannot be opened for reading: \(path)")
+                            stableCount = 0  // Reset stability count if can't open
+                            Thread.sleep(forTimeInterval: delayInterval)
+                            attempts += 1
+                            continue
+                        }
+                        
+                        // 2. Try to read a small amount of data to verify file integrity
+                        do {
+                            let testData = fileHandle.readData(ofLength: 1024)  // Read first 1KB
+                            fileHandle.closeFile()
+                            
+                            // 3. Verify we could read some data
+                            if testData.count > 0 {
+                                // 4. Additional verification: try to get file attributes again
+                                let finalAttributes = try fd.attributesOfItem(atPath: path)
+                                let finalSize = finalAttributes[FileAttributeKey.size] as? Int64 ?? 0
+                                
+                                // 5. Ensure file size hasn't changed during our checks
+                                if finalSize == currentSize {
+                                    print("File is ready for delivery: \(path) (size: \(finalSize) bytes)")
+                                    return true
+                                } else {
+                                    print("File size changed during readiness check, resetting...")
+                                    stableCount = 0
+                                    lastSize = finalSize
+                                }
+                            } else {
+                                print("File appears empty or unreadable, waiting...")
+                                stableCount = 0
+                            }
+                        } catch {
+                            fileHandle.closeFile()
+                            print("Error reading file during readiness check: \(error.localizedDescription)")
+                            stableCount = 0
+                        }
+                    }
+                } else {
+                    stableCount = 0
+                    lastSize = currentSize
+                }
+            } catch {
+                print("Error checking file attributes: \(error.localizedDescription)")
+                stableCount = 0  // Reset on any error
+            }
+            
+            Thread.sleep(forTimeInterval: delayInterval)
+            attempts += 1
+        }
+        
+        print("File readiness check timed out after \(attempts) attempts for: \(path)")
+        return false
+    }
+    
     static func cleanupTempFiles() {
         let tempDir = getTempDirectory()
         do {
@@ -301,6 +389,12 @@ class SCContext {
             return true
         }
         
+        // Wait for file to be fully written and ready with reasonable timeout
+        print("Waiting for file to be ready for delivery...")
+        if !waitForFileReady(atPath: filePath, maxAttempts: 20, delayInterval: 0.1) {
+            print("Warning: File may not be fully ready, but proceeding with move after timeout")
+        }
+        
         // Add configurable delay before moving to destination
         let delaySeconds = ud.integer(forKey: "fileDeliveryDelay")
         if delaySeconds > 0 {
@@ -311,6 +405,15 @@ class SCContext {
         do {
             print("Moving recording from \(filePath ?? "nil") to \(finalPath)")
             try moveFromTempToFinal(tempPath: filePath, finalPath: finalPath)
+            
+            // Verify the moved file is ready for consumption in background
+            DispatchQueue.global(qos: .utility).async {
+                if !waitForFileReady(atPath: finalPath, maxAttempts: 10, delayInterval: 0.1) {
+                    print("Warning: Moved file may not be immediately ready for consumption")
+                } else {
+                    print("Confirmed: File is ready for consumption at destination")
+                }
+            }
             
             // Update filePath to point to final location for any subsequent references
             filePath = finalPath
@@ -331,9 +434,25 @@ class SCContext {
             return true
         }
         
+        // Wait for file to be fully written and ready with reasonable timeout
+        print("Waiting for file to be ready for delivery...")
+        if !waitForFileReady(atPath: tempPath, maxAttempts: 20, delayInterval: 0.1) {
+            print("Warning: File may not be fully ready, but proceeding with move after timeout")
+        }
+        
         do {
             print("Moving recording from \(tempPath) to \(finalPath)")
             try moveFromTempToFinal(tempPath: tempPath, finalPath: finalPath)
+            
+            // Verify the moved file is ready for consumption in background
+            DispatchQueue.global(qos: .utility).async {
+                if !waitForFileReady(atPath: finalPath, maxAttempts: 10, delayInterval: 0.1) {
+                    print("Warning: Moved file may not be immediately ready for consumption")
+                } else {
+                    print("Confirmed: File is ready for consumption at destination")
+                }
+            }
+            
             print("Successfully moved recording to final location: \(finalPath)")
             return true
         } catch {
