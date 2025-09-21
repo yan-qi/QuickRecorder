@@ -523,62 +523,72 @@ extension AppDelegate {
     }
     
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-        if SCContext.saveFrame, let imageBuffer = sampleBuffer.imageBuffer {
-            SCContext.saveFrame = false
-            
-            var ciImage = CIImage(cvPixelBuffer: imageBuffer)
-            let url = "\(SCContext.getFilePath(capture: true)).png".url
-            if !recordHDR {
-                sampleBuffer.nsImage?.saveToFile(url)
-            } else {
-                let context = CIContext()
-                
-                // Create the HEIF destination with the correct UTI
-                //            if let destination = url? {
-                // Specify format and color space (assuming default settings here)
-                //                let format = CIFormat.rgb10
-                let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
-                
-                // let colorSpace = ciImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
-                
-                // Image exposure needs to be increased by one stop to match the original
-                ciImage = ciImage.applyingFilter("CIExposureAdjust", parameters: ["inputEV": 1.0])
-                
-                
-                
-                
-                
-                //                context.writeHEIF10Representation(of: ciImage, to: destination as! URL, colorSpace: colorSpace)
-                do{
-                    // try context.writeHEIF10Representation(of:ciImage,
-                    //                                       to:url,
-                    //                                       colorSpace:colorSpace,
-                    //                                       options: [
-                    //     kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 1.0
-                    if #available(macOS 14.0, *) {
-                        try context.writePNGRepresentation(of:ciImage,
-                                                           to:url,
-                                                           format: .RGB10,
-                                                           colorSpace:colorSpace
-                        )
-                    } else {
-                        // Fallback on earlier versions
-                        print("RGB10 PNG not supported on this macOS version")
-                        try context.writePNGRepresentation(of:ciImage,
-                                                           to:url,
-                                                           format: .RGBA8,
-                                                           colorSpace:colorSpace)
-                    }
-                    //        try context.writePNGRepresentation(of:outImage, to:outURL, format: .RGBA16,colorSpace:colorSpace,options:[:])
-                } catch let error {
-                    // Handle the error case
-                    print("Error: \(error)")
-                }
-                //                CGImageDestinationFinalize(destination)
+        // Wrap sample buffer processing in autoreleasepool for long-running recordings
+        autoreleasepool {
+            // STABILITY CHECK: Skip frame if memory pressure is too high
+            if SCContext.shouldSkipFrameDueToMemoryPressure() {
+                return
             }
-        }
-        if SCContext.isPaused { return }
-        guard sampleBuffer.isValid else { return }
+
+            // STABILITY CHECK: Restart audio engine if needed for long recordings
+            SCContext.checkAndRestartAudioEngineIfNeeded()
+
+            if SCContext.saveFrame, let imageBuffer = sampleBuffer.imageBuffer {
+                SCContext.saveFrame = false
+
+                var ciImage = CIImage(cvPixelBuffer: imageBuffer)
+                let url = "\(SCContext.getFilePath(capture: true)).png".url
+                if !recordHDR {
+                    sampleBuffer.nsImage?.saveToFile(url)
+                } else {
+                    let context = CIContext()
+
+                    // Create the HEIF destination with the correct UTI
+                    //            if let destination = url? {
+                    // Specify format and color space (assuming default settings here)
+                    //                let format = CIFormat.rgb10
+                    let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
+
+                    // let colorSpace = ciImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+
+                    // Image exposure needs to be increased by one stop to match the original
+                    ciImage = ciImage.applyingFilter("CIExposureAdjust", parameters: ["inputEV": 1.0])
+
+
+
+
+
+                    //                context.writeHEIF10Representation(of: ciImage, to: destination as! URL, colorSpace: colorSpace)
+                    do{
+                        // try context.writeHEIF10Representation(of:ciImage,
+                        //                                       to:url,
+                        //                                       colorSpace:colorSpace,
+                        //                                       options: [
+                        //     kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 1.0
+                        if #available(macOS 14.0, *) {
+                            try context.writePNGRepresentation(of:ciImage,
+                                                               to:url,
+                                                               format: .RGB10,
+                                                               colorSpace:colorSpace
+                            )
+                        } else {
+                            // Fallback on earlier versions
+                            print("RGB10 PNG not supported on this macOS version")
+                            try context.writePNGRepresentation(of:ciImage,
+                                                               to:url,
+                                                               format: .RGBA8,
+                                                               colorSpace:colorSpace)
+                        }
+                        //        try context.writePNGRepresentation(of:outImage, to:outURL, format: .RGBA16,colorSpace:colorSpace,options:[:])
+                    } catch let error {
+                        // Handle the error case
+                        print("Error: \(error)")
+                    }
+                    //                CGImageDestinationFinalize(destination)
+                }
+            }
+            if SCContext.isPaused { return }
+            guard sampleBuffer.isValid else { return }
         var SampleBuffer = sampleBuffer
         if SCContext.isResume {
             SCContext.isResume = false
@@ -642,7 +652,12 @@ extension AppDelegate {
                 }
                 if SCContext.startTime == nil { SCContext.startTime = Date.now }
                 guard let samples = SampleBuffer.asPCMBuffer else { return }
-                do { try SCContext.audioFile?.write(from: samples) }
+                do {
+                    try SCContext.audioFile?.write(from: samples)
+
+                    // STABILITY: Perform periodic file flushing for long recordings
+                    SCContext.performPeriodicFileFlushIfNeeded()
+                }
                 catch { assertionFailure("audio file writing issue".local) }
             } else {
                 if SCContext.lastPTS == nil { return }
@@ -655,6 +670,7 @@ extension AppDelegate {
         @unknown default:
             assertionFailure("unknown stream type".local)
         }
+        } // End autoreleasepool
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) { // stream error
