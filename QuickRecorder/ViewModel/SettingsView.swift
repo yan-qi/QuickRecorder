@@ -110,13 +110,68 @@ struct RecorderView: View {
     @AppStorage("preventSleep")     private var preventSleep: Bool = true
     @AppStorage("showPreview")      private var showPreview: Bool = true
     @AppStorage("hideCCenter")      private var hideCCenter: Bool = false
+    @AppStorage("recordingTimeout") private var recordingTimeout: Int = 0
     
     @State private var userColor: Color = Color.black
+
+    private var timeoutStatusText: String {
+        if recordingTimeout == 0 {
+            return "Recording will not automatically stop"
+        } else if recordingTimeout < 60 {
+            return "Recording will stop after \(recordingTimeout) minute\(recordingTimeout == 1 ? "" : "s")"
+        } else {
+            let hours = recordingTimeout / 60
+            let minutes = recordingTimeout % 60
+            if minutes == 0 {
+                return "Recording will stop after \(hours) hour\(hours == 1 ? "" : "s")"
+            } else {
+                return "Recording will stop after \(hours)h \(minutes)m"
+            }
+        }
+    }
 
     var body: some View {
         SForm(spacing: 10) {
             SGroupBox(label: "Recorder") {
                 SSteper("Delay Before Recording", value: $countdown, min: 0, max: 99)
+                SDivider()
+
+                // Enhanced timeout configuration
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Auto-stop Recording (minutes)")
+                        Spacer()
+                        SSteper("", value: $recordingTimeout, min: 0, max: 1440)
+                            .frame(width: 120)
+                    }
+
+                    // Quick preset buttons
+                    HStack(spacing: 6) {
+                        ForEach([
+                            ("Off", 0),
+                            ("30m", 30),
+                            ("1h", 60),
+                            ("2h", 120),
+                            ("4h", 240),
+                            ("8h", 480)
+                        ], id: \.0) { preset in
+                            Button(preset.0) {
+                                recordingTimeout = preset.1
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .foregroundColor(recordingTimeout == preset.1 ? .white : .primary)
+                            .background(recordingTimeout == preset.1 ? Color.accentColor : Color.clear)
+                        }
+                        Spacer()
+                    }
+
+                    Text(timeoutStatusText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .help("Automatically stop recording after specified minutes. Set to 0 to disable timeout.")
+
                 SDivider()
                 if #available(macOS 14, *) {
                     SSteper("Presenter Overlay Delay", value: $poSafeDelay, min: 0, max: 99, tips: "If enabling Presenter Overlay causes recording failure, please increase this value.")

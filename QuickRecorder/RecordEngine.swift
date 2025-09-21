@@ -614,6 +614,9 @@ extension AppDelegate {
             if SCContext.vW != nil && SCContext.vW?.status == .writing, SCContext.startTime == nil {
                 SCContext.startTime = Date.now
                 SCContext.vW.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(SampleBuffer))
+
+                // Start recording timeout after recording officially begins
+                SCContext.startRecordingTimeout()
             }
             if (SCContext.timeOffset.value > 0) { SampleBuffer = SCContext.adjustTime(sample: SampleBuffer, by: SCContext.timeOffset) ?? sampleBuffer }
             var pts = CMSampleBufferGetPresentationTimeStamp(SampleBuffer)
@@ -650,7 +653,12 @@ extension AppDelegate {
                 if SCContext.vW != nil && SCContext.vW?.status == .writing, SCContext.startTime == nil {
                     SCContext.vW.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(SampleBuffer))
                 }
-                if SCContext.startTime == nil { SCContext.startTime = Date.now }
+                if SCContext.startTime == nil {
+                    SCContext.startTime = Date.now
+
+                    // Start recording timeout for audio-only recording
+                    SCContext.startRecordingTimeout()
+                }
                 guard let samples = SampleBuffer.asPCMBuffer else { return }
                 do {
                     try SCContext.audioFile?.write(from: samples)

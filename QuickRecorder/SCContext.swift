@@ -14,6 +14,255 @@ import SwiftLAME
 import SwiftUI
 import AECAudioStream
 
+// MARK: - Recording Timeout Protocol and Manager
+
+/// Protocol for handling recording timeout events
+protocol RecordingTimeoutDelegate: AnyObject {
+    /// Called when the recording timeout expires
+    func recordingTimeoutExpired()
+
+    /// Called when a warning should be shown before timeout expires
+    /// - Parameter remainingTime: Time remaining until timeout in seconds
+    func recordingTimeoutWarning(remainingTime: TimeInterval)
+}
+
+/// Manages automatic recording timeout functionality with precision timing
+class RecordingTimeoutManager {
+
+    // MARK: - Properties
+
+    /// Delegate to handle timeout events
+    weak var delegate: RecordingTimeoutDelegate?
+
+    /// Whether the timeout is currently active
+    private(set) var isActive: Bool = false
+
+    /// Whether the timeout is currently paused
+    private(set) var isPaused: Bool = false
+
+    /// The configured timeout duration in seconds
+    private(set) var duration: TimeInterval = 0
+
+    /// The time when the timeout was started
+    private(set) var startTime: Date?
+
+    /// Time remaining when paused (for resume calculation)
+    private var pausedRemainingTime: TimeInterval = 0
+
+    /// Time when the timeout was paused
+    private var pauseTime: Date?
+
+    /// The dispatch source timer for timeout
+    private var timeoutTimer: DispatchSourceTimer?
+
+    /// The dispatch source timer for warning
+    private var warningTimer: DispatchSourceTimer?
+
+    /// Queue for timer operations
+    private let timerQueue = DispatchQueue(label: "recording.timeout.timer", qos: .userInitiated)
+
+    /// Threshold for warning notification (default: 5 minutes)
+    var warningThreshold: TimeInterval = 300
+
+    /// Whether warning has been sent
+    private var warningShown: Bool = false
+
+    // MARK: - Initialization
+
+    init() {}
+
+    deinit {
+        cancelTimeout()
+    }
+
+    // MARK: - Public Methods
+
+    /// Starts the recording timeout
+    /// - Parameter duration: Timeout duration in seconds. Must be > 0 to start
+    func startTimeout(duration: TimeInterval) {
+        // Validate duration
+        guard duration > 0 else {
+            print("RecordingTimeoutManager: Invalid duration \(duration), timeout not started")
+            return
+        }
+
+        // Cancel any existing timeout
+        cancelTimeout()
+
+        // Set up new timeout
+        self.duration = duration
+        self.startTime = Date()
+        self.isActive = true
+        self.isPaused = false
+        self.warningShown = false
+
+        print("RecordingTimeoutManager: Starting timeout for \(duration) seconds")
+
+        // Schedule timeout timer
+        scheduleTimeoutTimer(for: duration)
+
+        // Schedule warning timer if threshold is valid
+        if warningThreshold > 0 && duration > warningThreshold {
+            scheduleWarningTimer(for: duration - warningThreshold)
+        }
+    }
+
+    /// Cancels the active timeout
+    func cancelTimeout() {
+        guard isActive else { return }
+
+        print("RecordingTimeoutManager: Cancelling timeout")
+
+        // Cancel timers
+        timeoutTimer?.cancel()
+        timeoutTimer = nil
+        warningTimer?.cancel()
+        warningTimer = nil
+
+        // Reset state
+        isActive = false
+        isPaused = false
+        startTime = nil
+        pausedRemainingTime = 0
+        pauseTime = nil
+        warningShown = false
+    }
+
+    /// Pauses the timeout (preserves remaining time)
+    func pauseTimeout() {
+        guard isActive && !isPaused else { return }
+
+        print("RecordingTimeoutManager: Pausing timeout")
+
+        // Calculate remaining time
+        pausedRemainingTime = remainingTime
+        pauseTime = Date()
+
+        // Cancel active timers
+        timeoutTimer?.cancel()
+        timeoutTimer = nil
+        warningTimer?.cancel()
+        warningTimer = nil
+
+        isPaused = true
+    }
+
+    /// Resumes the paused timeout
+    func resumeTimeout() {
+        guard isActive && isPaused else { return }
+
+        print("RecordingTimeoutManager: Resuming timeout with \(pausedRemainingTime) seconds remaining")
+
+        // Update start time to account for pause duration
+        startTime = Date()
+
+        // Reset pause state
+        isPaused = false
+        pauseTime = nil
+
+        // Reschedule timers with remaining time
+        scheduleTimeoutTimer(for: pausedRemainingTime)
+
+        // Reschedule warning timer if needed
+        if !warningShown && warningThreshold > 0 && pausedRemainingTime > warningThreshold {
+            scheduleWarningTimer(for: pausedRemainingTime - warningThreshold)
+        }
+    }
+
+    /// Calculates the remaining time until timeout
+    var remainingTime: TimeInterval {
+        guard isActive else { return 0 }
+
+        if isPaused {
+            return pausedRemainingTime
+        }
+
+        guard let start = startTime else { return 0 }
+        let elapsed = Date().timeIntervalSince(start)
+        return max(0, duration - elapsed)
+    }
+
+    // MARK: - Private Methods
+
+    /// Schedules the main timeout timer
+    /// - Parameter duration: Duration until timeout in seconds
+    private func scheduleTimeoutTimer(for duration: TimeInterval) {
+        timeoutTimer = DispatchSource.makeTimerSource(queue: timerQueue)
+        timeoutTimer?.schedule(deadline: .now() + duration)
+        timeoutTimer?.setEventHandler { [weak self] in
+            self?.handleTimeoutExpiration()
+        }
+        timeoutTimer?.resume()
+    }
+
+    /// Schedules the warning timer
+    /// - Parameter delay: Delay until warning in seconds
+    private func scheduleWarningTimer(for delay: TimeInterval) {
+        warningTimer = DispatchSource.makeTimerSource(queue: timerQueue)
+        warningTimer?.schedule(deadline: .now() + delay)
+        warningTimer?.setEventHandler { [weak self] in
+            self?.handleWarningTrigger()
+        }
+        warningTimer?.resume()
+    }
+
+    /// Handles timeout expiration
+    private func handleTimeoutExpiration() {
+        print("RecordingTimeoutManager: Timeout expired")
+
+        // Cancel warning timer if still active
+        warningTimer?.cancel()
+        warningTimer = nil
+
+        // Mark as inactive
+        isActive = false
+
+        // Notify delegate on main queue
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.recordingTimeoutExpired()
+        }
+    }
+
+    /// Handles warning trigger
+    private func handleWarningTrigger() {
+        guard !warningShown else { return }
+
+        print("RecordingTimeoutManager: Warning triggered")
+        warningShown = true
+
+        let remaining = remainingTime
+
+        // Notify delegate on main queue
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.recordingTimeoutWarning(remainingTime: remaining)
+        }
+    }
+}
+
+#if DEBUG
+extension RecordingTimeoutManager {
+    /// Test helper to get internal timer state
+    var hasActiveTimeoutTimer: Bool {
+        return timeoutTimer != nil
+    }
+
+    /// Test helper to get internal warning timer state
+    var hasActiveWarningTimer: Bool {
+        return warningTimer != nil
+    }
+
+    /// Test helper to trigger timeout manually
+    func triggerTimeoutForTesting() {
+        handleTimeoutExpiration()
+    }
+
+    /// Test helper to trigger warning manually
+    func triggerWarningForTesting() {
+        handleWarningTrigger()
+    }
+}
+#endif
+
 /// Test helper class for mock audio files
 class MockAudioFile {
     var wasFlushCalled = false
@@ -98,6 +347,12 @@ class SCContext {
     static var streamType: StreamType?
     static var availableContent: SCShareableContent?
     static let excludedApps = ["", "com.apple.dock", "com.apple.screencaptureui", "com.apple.controlcenter", "com.apple.notificationcenterui", "com.apple.systemuiserver", "com.apple.WindowManager", "dev.mnpn.Azayaka", "com.gaosun.eul", "com.pointum.hazeover", "net.matthewpalmer.Vanilla", "com.dwarvesv.minimalbar", "com.bjango.istatmenus.status"]
+
+    // MARK: - Recording Timeout Properties
+    static var timeoutManager: RecordingTimeoutManager?
+    static var timeoutStartTime: Date?
+    static var timeoutDuration: TimeInterval = 0
+    static var warningThreshold: TimeInterval = 300 // 5 minutes warning
     static let tempDirectoryName = ".tmp"
 
     // MARK: - Long Recording Stability
@@ -733,9 +988,15 @@ class SCContext {
             isResume = true
             startTime = Date.now.addingTimeInterval(-1) - SCContext.timePassed
         }
+
+        // Handle timeout pause/resume
+        pauseRecordingTimeout()
     }
     
     static func stopRecording() {
+        // Stop recording timeout first
+        stopRecordingTimeout()
+
         if ud.bool(forKey: "preventSleep") { SleepPreventer.shared.allowSleep() }
         autoStop = 0
         lastPTS = nil
@@ -747,7 +1008,7 @@ class SCContext {
         AppDelegate.shared.stopGlobalMouseMonitor()
 
         if let w = NSApp.windows.first(where:  { $0.title == "Area Overlayer".local }) { w.close() }
-        
+
         if stream != nil { stream.stopCapture() }
         stream = nil
         if ud.bool(forKey: "recordMic") {
@@ -1290,5 +1551,143 @@ class SCContext {
                 break
             }
         }
+    }
+
+    // MARK: - Recording Timeout Management
+
+    /// Convenience property to check if timeout is enabled
+    static var isTimeoutEnabled: Bool {
+        return timeoutDuration > 0
+    }
+
+    /// Configures timeout settings from UserDefaults
+    static func configureTimeoutFromUserDefaults() {
+        let timeoutMinutes = ud.integer(forKey: "recordingTimeout")
+        timeoutDuration = TimeInterval(timeoutMinutes * 60) // Convert minutes to seconds
+        print("Recording timeout configured: \(timeoutMinutes) minutes (\(timeoutDuration) seconds)")
+    }
+
+    /// Starts the recording timeout if enabled
+    static func startRecordingTimeout() {
+        // Configure from user defaults
+        configureTimeoutFromUserDefaults()
+
+        guard isTimeoutEnabled else {
+            print("Recording timeout disabled (duration: 0)")
+            return
+        }
+
+        print("Starting recording timeout: \(timeoutDuration) seconds")
+
+        // Create and configure timeout manager
+        timeoutManager = RecordingTimeoutManager()
+        timeoutManager?.delegate = TimeoutDelegate.shared
+        timeoutManager?.warningThreshold = warningThreshold
+
+        // Start the timeout
+        timeoutManager?.startTimeout(duration: timeoutDuration)
+        timeoutStartTime = Date()
+    }
+
+    /// Stops and cleans up the recording timeout
+    static func stopRecordingTimeout() {
+        guard timeoutManager != nil else { return }
+
+        print("Stopping recording timeout")
+        timeoutManager?.cancelTimeout()
+        timeoutManager = nil
+        timeoutStartTime = nil
+    }
+
+    /// Handles pause/resume of recording timeout based on current pause state
+    static func pauseRecordingTimeout() {
+        guard let manager = timeoutManager else { return }
+
+        if isPaused && !manager.isPaused {
+            print("Pausing recording timeout")
+            manager.pauseTimeout()
+        } else if !isPaused && manager.isPaused {
+            print("Resuming recording timeout")
+            manager.resumeTimeout()
+        }
+    }
+
+    /// Gets the remaining timeout duration in seconds
+    static func getRemainingTimeoutDuration() -> TimeInterval {
+        return timeoutManager?.remainingTime ?? 0
+    }
+
+    /// Formats remaining timeout duration for display
+    static func getFormattedRemainingTimeout() -> String {
+        let remaining = getRemainingTimeoutDuration()
+        guard remaining > 0 else { return "" }
+
+        let hours = Int(remaining) / 3600
+        let minutes = Int(remaining) % 3600 / 60
+        let seconds = Int(remaining) % 60
+
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            return String(format: "%02d:%02d", minutes, seconds)
+        }
+    }
+}
+
+// MARK: - Timeout Delegate Implementation
+
+/// Internal delegate class to handle timeout events
+private class TimeoutDelegate: RecordingTimeoutDelegate {
+    static let shared = TimeoutDelegate()
+
+    private init() {}
+
+    func recordingTimeoutExpired() {
+        print("Recording timeout expired - stopping recording")
+
+        // Show notification before stopping
+        let timeoutMinutes = Int(SCContext.timeoutDuration / 60)
+        let message: String
+        if timeoutMinutes >= 60 {
+            let hours = timeoutMinutes / 60
+            let mins = timeoutMinutes % 60
+            if mins > 0 {
+                message = "Recording stopped automatically after \(hours)h \(mins)m"
+            } else {
+                message = "Recording stopped automatically after \(hours) hour\(hours > 1 ? "s" : "")"
+            }
+        } else {
+            message = "Recording stopped automatically after \(timeoutMinutes) minute\(timeoutMinutes > 1 ? "s" : "")"
+        }
+
+        SCContext.showNotification(
+            title: "Recording Timeout",
+            body: message,
+            id: "recording.timeout.expired"
+        )
+
+        // Stop the recording
+        SCContext.stopRecording()
+    }
+
+    func recordingTimeoutWarning(remainingTime: TimeInterval) {
+        print("Recording timeout warning - \(remainingTime) seconds remaining")
+
+        let minutes = Int(remainingTime / 60)
+        let message: String
+        if minutes >= 60 {
+            let hours = minutes / 60
+            message = "Recording will auto-stop in approximately \(hours) hour\(hours > 1 ? "s" : "")"
+        } else if minutes > 0 {
+            message = "Recording will auto-stop in \(minutes) minute\(minutes > 1 ? "s" : "")"
+        } else {
+            message = "Recording will auto-stop in less than 1 minute"
+        }
+
+        SCContext.showNotification(
+            title: "Recording Timeout Warning",
+            body: message,
+            id: "recording.timeout.warning"
+        )
     }
 }
